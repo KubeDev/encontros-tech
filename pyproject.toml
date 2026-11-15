@@ -1,0 +1,33 @@
+[project]
+name = "encontros-tech"
+version = "0.1.0"
+description = "Divulgação de eventos de tecnologia"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "Flask==3.0.0",
+    "gunicorn==21.2.0",
+    "prometheus-flask-exporter==0.23.0",
+    "prometheus-client==0.21.1",
+    "Jinja2==3.1.6",
+    "MarkupSafe==3.0.2",
+    "psycopg2-binary==2.9.10",
+    "pydantic==2.11.7",
+    "pydantic-settings==2.10.1",
+    "pydantic_core==2.33.2",
+    "python-dotenv==1.1.1",
+    "PyYAML==6.0.2",
+    "SQLAlchemy==2.0.43",
+    "typing_extensions==4.15.0",
+    "Werkzeug==3.0.1",
+]
+
+[dependency-groups]
+dev = ["pytest==8.3.4"]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["src/tests"]
+addopts = "-ra"
