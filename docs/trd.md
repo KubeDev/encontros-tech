@@ -6,6 +6,9 @@
 > **Contexto do ciclo atual:** porte da aplicação de um servidor com systemd para imagem
 > Docker, Docker Compose local e manifestos Kubernetes, com banco PostgreSQL gerenciado na
 > DigitalOcean, **sem alteração do código da aplicação** ([ADR 004](adrs/004-porte-sem-alteracao-de-codigo.md)).
+> O ambiente na DigitalOcean é de **homologação de um MVP**, não de produção, dimensionado para
+> custo baixo e provisionado com Terraform ([ADR 007](adrs/007-rede-vpc-dedicada-homologacao.md),
+> [ADR 008](adrs/008-terraform-estado-local-aplicacao-manual.md), [ADR 009](adrs/009-homologacao-otimizada-para-custo.md)).
 >
 > Marcações: **[Verificado — fonte, data]** fato externo consultado; **[premissa]** inferido na
 > consolidação, aceito pelo responsável, mas ainda passível de correção.
@@ -17,11 +20,12 @@
 | Dimensão | Valor |
 |---|---|
 | Linguagem principal | Python 3.12 (`.python-version`; `requires-python >=3.12,<3.14`) |
-| Runtime / plataforma | Contêiner Docker (Python 3.12 slim) em Kubernetes — DOKS **[premissa]** |
+| Runtime / plataforma | Contêiner Docker (Python 3.12 slim) em Kubernetes gerenciado da DigitalOcean (DOKS), versão `1.37.2-do.0` como valor inicial **[premissa: DOKS]** **[Verificado — `doctl kubernetes options versions`, 2026-11-17]** |
 | Framework principal | Flask 3.0.0, servido por gunicorn 21.2.0 |
-| Banco de dados | PostgreSQL gerenciado da DigitalOcean (produção) — versão major 18 **[premissa: padrão para clusters novos; confirme a do seu cluster]**; PostgreSQL 18 em contêiner (local) |
+| Banco de dados | PostgreSQL 18 gerenciado da DigitalOcean (homologação) **[Verificado — `doctl databases options versions`: 15 a 18, 2026-11-17]**; PostgreSQL 18 em contêiner (local) |
 | Acesso a dados | SQLAlchemy 2.0.43 + psycopg2-binary 2.9.10; validação com Pydantic 2.11.7 |
-| Ferramentas de build | Docker (imagem multi-stage) |
+| Ferramentas de build | Docker (imagem single-stage) |
+| Infraestrutura como código | Terraform ≥ 1.17 com provider `digitalocean` ~> 2.108, estado local, aplicado manualmente **[Verificado — registry.terraform.io e checkpoint-api.hashicorp.com: Terraform 1.17.2, provider 2.108.0, 2026-11-17]** ([ADR 008](adrs/008-terraform-estado-local-aplicacao-manual.md)) |
 | Gerenciador de pacotes | uv (`pyproject.toml` + `uv.lock`, `package = false`) |
 | Registry de imagens | Docker Hub |
 | Orquestração | Kubernetes, manifestos em YAML puro aplicados com `kubectl` ([ADR 002](adrs/002-manifestos-kubernetes-yaml-puro.md)) |
@@ -62,26 +66,73 @@ encontros-tech/
 | `models` / `schemas` | Persistência (SQLAlchemy) e validação (Pydantic) |
 | `core` | Configuração por variáveis de ambiente, engine do banco, logging no stdout |
 
+### Infraestrutura na DigitalOcean (homologação)
+
+```mermaid
+flowchart LR
+    usuarios(["Quem testa a homologação"])
+    operador["Máquina do operador<br/>Terraform + estado local<br/>kubectl / psql"]
+    dockerhub[("Docker Hub<br/>imagem da aplicação")]
+
+    subgraph cloud["DigitalOcean — região var.region (padrão nyc1)"]
+        subgraph vpc["VPC dedicada ao projeto"]
+            lb["Load Balancer<br/>HTTP :80<br/>criado pelo Service"]
+            subgraph doks["Cluster DOKS — control plane sem HA"]
+                subgraph n1["Nó 1 — s-1vcpu-2gb"]
+                    p1["Pod encontros-tech<br/>gunicorn, 2 workers sync"]
+                end
+                subgraph n2["Nó 2 — s-1vcpu-2gb"]
+                    p2["Pod encontros-tech<br/>gunicorn, 2 workers sync"]
+                end
+            end
+            db[("PostgreSQL 18 gerenciado<br/>db-amd-1vcpu-1gb, 1 nó<br/>sem trusted sources")]
+        end
+    end
+
+    usuarios -->|HTTP| lb
+    lb --> p1
+    lb --> p2
+    p1 -->|"endereço privado, TLS"| db
+    p2 -->|"endereço privado, TLS"| db
+    dockerhub -.->|pull da imagem| doks
+    operador -.->|"terraform apply: VPC, cluster, banco"| cloud
+    operador -.->|"kubectl apply: manifestos YAML"| doks
+    operador -.->|"endereço público, TLS"| db
+```
+
+| Recurso | Definição | Criado por |
+|---|---|---|
+| VPC | Dedicada ao projeto, na região `var.region` (padrão `nyc1`). Mudar a região = destruir e recriar tudo ([ADR 007](adrs/007-rede-vpc-dedicada-homologacao.md)) | Terraform |
+| Cluster DOKS | VPC-native, sub-redes de pods /16 e services /19 sem sobrepor nenhuma VPC do time **[premissa: tamanhos padrão]**; `ha = false` explícito; versão por variável (inicial `1.37.2-do.0`), patch automático ligado; `destroy_all_associated_resources = true`; API sem `control_plane_firewall` ([ADR 009](adrs/009-homologacao-otimizada-para-custo.md)) | Terraform |
+| Node pool | 2 nós `s-1vcpu-2gb`, sem autoscaling | Terraform |
+| Banco | PostgreSQL 18, `db-amd-1vcpu-1gb`, 1 nó sem standby, sem trusted sources (aceita qualquer origem — risco aceito) | Terraform |
+| Load Balancer | Um, criado pelo Service `LoadBalancer` dentro da VPC ([ADR 003](adrs/003-exposicao-service-loadbalancer.md)) | Kubernetes (Service) |
+| Aplicação | Deployment, Service, ConfigMap e Secret em YAML puro ([ADR 002](adrs/002-manifestos-kubernetes-yaml-puro.md)) | `kubectl` |
+
+**Fronteira Terraform × kubectl:** a `DATABASE_URL` vem do output `private_uri` do banco e é
+colocada **manualmente** no Secret ([ADR 008](adrs/008-terraform-estado-local-aplicacao-manual.md)).
+O estado do Terraform e os `*.tfvars` contêm segredos e nunca são commitados.
+
 ### Topologia de execução
 
-**Produção (Kubernetes):**
+**Homologação (Kubernetes):**
 
 | Componente | Definição |
 |---|---|
-| Deployment | 2 réplicas; gunicorn com **2 workers sync** por pod, ouvindo em `0.0.0.0:8000`, `main:app`, com o diretório de trabalho em `src/` ([ADR 005](adrs/005-orcamento-de-conexoes-worker-sync-sem-pgbouncer.md)) |
+| Deployment | 2 réplicas (uma por nó, quando o scheduler distribuir **[premissa]**); gunicorn com **2 workers sync** por pod, ouvindo em `0.0.0.0:8000`, `main:app`, com o diretório de trabalho em `src/` ([ADR 005](adrs/005-orcamento-de-conexoes-worker-sync-sem-pgbouncer.md)) |
 | Service | Tipo `LoadBalancer` (provisiona um Load Balancer da DigitalOcean), HTTP, sem TLS neste ciclo **[premissa]** ([ADR 003](adrs/003-exposicao-service-loadbalancer.md)) |
 | ConfigMap | Configuração não sensível: `APP_TITLE`, `DEBUG=false`, `LOG_LEVEL`, `LOG_FORMAT`, `SERVICE_NAME`, `SERVICE_VERSION` |
-| Secret | `DATABASE_URL` completa (usuário, senha, host, porta e `sslmode=require`). Não é versionada com valores reais **[premissa]** |
+| Secret | `DATABASE_URL` completa, com o **host privado** do banco (usuário, senha, host, porta e `sslmode=require`). Não é versionada com valores reais **[premissa]** |
 | Probes | `tcpSocket` na porta 8000 para liveness e readiness; sem probe HTTP, porque `/` consulta o banco ([ADR 004](adrs/004-porte-sem-alteracao-de-codigo.md)) |
-| Banco | PostgreSQL gerenciado da DigitalOcean, fora do cluster ([ADR 001](adrs/001-banco-postgresql-gerenciado-digitalocean.md)) |
+| Banco | PostgreSQL gerenciado da DigitalOcean, fora do cluster e dentro da mesma VPC ([ADR 001](adrs/001-banco-postgresql-gerenciado-digitalocean.md), [ADR 007](adrs/007-rede-vpc-dedicada-homologacao.md)) |
 
 **Local (Docker Compose):** serviço da aplicação (mesma imagem) + serviço PostgreSQL 18 com
 volume, configurados a partir de `.env` (modelo em `.env.exemple`).
 
 ### Imagem Docker
 
-- Base Python 3.12 slim, multi-stage: o estágio de build instala as dependências pelo `uv.lock`
-  (sem as de desenvolvimento); o estágio final leva só o ambiente e `src/`.
+- Base Python 3.12 slim, **single-stage**: o `uv` e o `uv.lock` entram só como mount de build
+  (`uv sync --frozen --no-dev`), sem ficar em nenhuma camada; a imagem leva o ambiente e `src/`.
 - Executa como usuário não-root; `/tmp` gravável (o código cria o diretório de métricas lá).
 - Contexto de build na raiz do repositório (o `uv.lock` fica na raiz; o Dockerfile antigo, removido
   em `0f5bbad`, usava `src/` e `requirements.txt`).
@@ -98,9 +149,10 @@ volume, configurados a partir de `.env` (modelo em `.env.exemple`).
 | Dimensão | Requisito |
 |---|---|
 | Performance | Não definido |
-| Disponibilidade / SLA | Sem SLA definido. 2 réplicas, para manter a aplicação no ar durante o rolling update e se um nó cair. HA e backup do banco ficam com a DigitalOcean |
+| Custo | Restrição declarada: homologação otimizada para custo baixo — control plane sem HA, 2 nós do menor tamanho, banco de 1 nó sem standby ([ADR 009](adrs/009-homologacao-otimizada-para-custo.md)) |
+| Disponibilidade / SLA | Sem SLA (homologação). 2 réplicas em 2 nós, para manter a aplicação no ar durante o rolling update e se um nó cair. Sem HA no control plane nem standby no banco: falha do banco derruba o ambiente. Backup diário do banco fica com a DigitalOcean; dados de homologação são descartáveis **[premissa]**. Backup do estado do Terraform é responsabilidade do operador, fora do escopo |
 | Escalabilidade | Escalar por réplicas, não por workers. Limite dado pela regra de conexões: `(réplicas + surge) × workers × conexões por worker ≤ conexões do plano − folga`. Hoje: (2 + 1) × 2 × 1 = 6 de 22 no plano de 1 GiB. Passou do limite → PgBouncer ou plano maior, via ADR novo ([ADR 005](adrs/005-orcamento-de-conexoes-worker-sync-sem-pgbouncer.md)). Sem autoscaling neste ciclo |
-| Segurança | Conexão com o banco por TLS (`sslmode=require`) **[Verificado — DigitalOcean, How to Connect, 2026-11-16]**; credenciais só em Secret; imagem não-root. Riscos aceitos: `SECRET_KEY` fixa no código; tráfego público em HTTP sem TLS; o `edit_token` aparece em log de nível INFO no service de eventos |
+| Segurança | Conexão com o banco por TLS (`sslmode=require`) **[Verificado — DigitalOcean, How to Connect, 2026-11-16]**; aplicação → banco pelo endereço privado da VPC; credenciais só em Secret; estado do Terraform e `*.tfvars` fora do Git; imagem não-root. Riscos aceitos: banco sem trusted sources (aceita conexão de qualquer origem) e API do cluster sem firewall ([ADR 007](adrs/007-rede-vpc-dedicada-homologacao.md)) — desenho não serve para produção; `SECRET_KEY` fixa no código; tráfego público em HTTP sem TLS; o `edit_token` aparece em log de nível INFO no service de eventos |
 | Observabilidade | Logs em texto no stdout (sem cor fora de TTY). Métricas Prometheus em `/metrics` na porta da aplicação, refletindo só o worker que atendeu (risco aceito; `PROMETHEUS_MULTIPROC_DIR` não deve ser definida no contêiner). A coleta pelo Prometheus fica fora do escopo deste ciclo |
 
 ---
@@ -110,7 +162,9 @@ volume, configurados a partir de `.env` (modelo em `.env.exemple`).
 | Serviço / Sistema | Tipo | Constraint relevante | Dono |
 |---|---|---|---|
 | PostgreSQL gerenciado — DigitalOcean | Banco relacional via TCP/TLS | Conexões por plano: 1 GiB = 22, 2 GiB = 47, 4 GiB = 97 (3 já reservadas para manutenção); sem `superuser`; padrão `sslmode=require`; porta lida dos dados de conexão do cluster; PgBouncer gerenciado disponível (modo transaction por padrão, até 21 pools por cluster); versões 15 a 18 em clusters novos, 18 como padrão **[Verificado — docs.digitalocean.com: [Limits](https://docs.digitalocean.com/products/databases/postgresql/details/limits/), [Connect](https://docs.digitalocean.com/products/databases/postgresql/how-to/connect/), [Connection Pools](https://docs.digitalocean.com/products/databases/postgresql/how-to/manage-connection-pools/), [Version Support Policy](https://docs.digitalocean.com/products/databases/version-support-policy/), 2026-11-16]** | externo — DigitalOcean |
-| Kubernetes — DOKS | Plataforma de execução | Service `LoadBalancer` cria um Load Balancer pago da DigitalOcean por Service **[premissa: cluster DOKS]** | externo — DigitalOcean |
+| Kubernetes — DOKS | Plataforma de execução | Service `LoadBalancer` cria um Load Balancer pago por Service **[premissa: cluster DOKS]**. Cluster e Load Balancer não migram de VPC; sub-redes VPC-native fixadas na criação, sem sobreposição com VPCs do time e sem ampliação; control plane HA ligado por padrão a partir da 1.36 e irreversível; menor nó `s-1vcpu-2gb` **[Verificado — docs.digitalocean.com (VPC, DOKS) e docs do provider Terraform via Context7; `doctl`, 2026-11-17]** | externo — DigitalOcean |
+| VPC — DigitalOcean | Rede privada | Regional: só recursos da mesma região; banco gerenciado pode migrar de VPC, cluster e Load Balancer não **[Verificado — docs.digitalocean.com, VPC, via Context7, 2026-11-17]** | externo — DigitalOcean |
+| Terraform + provider `digitalocean` | Provisionamento | Estado local com segredos em texto puro; sem lock de concorrência (operador único) ([ADR 008](adrs/008-terraform-estado-local-aplicacao-manual.md)) | externo — HashiCorp / DigitalOcean |
 | Docker Hub | Registry de imagens | Origem da imagem da aplicação para o cluster | externo — Docker |
 
 ---
@@ -166,3 +220,6 @@ Não há autenticação de usuário. A edição de um evento é autorizada pela 
 | 004 | Porte para contêiner sem alterar o código da aplicação | 2026-11-16 | aceito | [004](adrs/004-porte-sem-alteracao-de-codigo.md) |
 | 005 | Orçamento de conexões com worker sync e sem PgBouncer | 2026-11-16 | aceito | [005](adrs/005-orcamento-de-conexoes-worker-sync-sem-pgbouncer.md) |
 | 006 | Estratégia de criação do schema e migrations | 2026-11-16 | proposto | [006](adrs/006-estrategia-de-schema-e-migrations.md) |
+| 007 | Rede da homologação — VPC dedicada, banco por endereço privado e acesso público aceito | 2026-11-17 | aceito | [007](adrs/007-rede-vpc-dedicada-homologacao.md) |
+| 008 | Infraestrutura em Terraform, com estado local e aplicação manual | 2026-11-17 | aceito | [008](adrs/008-terraform-estado-local-aplicacao-manual.md) |
+| 009 | Ambiente de homologação dimensionado para custo baixo | 2026-11-17 | aceito | [009](adrs/009-homologacao-otimizada-para-custo.md) |
