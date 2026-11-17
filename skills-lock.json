@@ -1,0 +1,33 @@
+{
+  "version": 2,
+  "skills": {
+    "brainstorm": {
+      "source": "fabricioveronez/harness-publico",
+      "commit": "38066eeb27d4e7bebd8435a2a300b112e598296d",
+      "sourceType": "github",
+      "skillPath": "plugins/uso-geral/skills/brainstorm/SKILL.md",
+      "computedHash": "0efbd44eee062c5d4dc47b0862241dbc170f119ec8ec85b8948630014d15d93a"
+    },
+    "brainstorm-for-systems": {
+      "source": "fabricioveronez/harness-publico",
+      "commit": "38066eeb27d4e7bebd8435a2a300b112e598296d",
+      "sourceType": "github",
+      "skillPath": "plugins/spec-driven-development/skills/brainstorm-for-systems/SKILL.md",
+      "computedHash": "7d9035cbdd82ab135fe5887ac502be4e3d4a00b91dc4b35096272d3f4df3b438"
+    },
+    "docker-practices": {
+      "source": "fabricioveronez/harness-publico",
+      "commit": "38066eeb27d4e7bebd8435a2a300b112e598296d",
+      "sourceType": "github",
+      "skillPath": "plugins/devops/skills/docker-practices/SKILL.md",
+      "computedHash": "5e9f0e6e480d8e9c0d3594cebfcdc4ad597c51e0c6bc5144f06c8093900b8094"
+    },
+    "escrever-trd": {
+      "source": "fabricioveronez/harness-publico",
+      "commit": "38066eeb27d4e7bebd8435a2a300b112e598296d",
+      "sourceType": "github",
+      "skillPath": "plugins/spec-driven-development/skills/escrever-trd/SKILL.md",
+      "computedHash": "c34c9715931ff97126778cad87f87eaeb5c8787e8f3a3de2e08a8773918c1874"
+    }
+  }
+}
