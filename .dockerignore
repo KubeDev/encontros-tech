@@ -1,0 +1,28 @@
+# VCS e ferramentas
+.git
+.gitignore
+.agents
+.claude
+skills-lock.json
+.vscode
+.idea
+
+# Ambiente e secrets
+.env
+.env.*
+**/.env
+**/.env.*
+.venv
+**/__pycache__
+**/*.py[cod]
+.pytest_cache
+
+# Fora da imagem de produção
+src/tests
+docs
+*.md
+api-requests.http
+Dockerfile
+.dockerignore
+compose*.yaml
+.hadolint.yaml
