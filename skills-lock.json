@@ -28,6 +28,20 @@
       "sourceType": "github",
       "skillPath": "plugins/spec-driven-development/skills/escrever-trd/SKILL.md",
       "computedHash": "c34c9715931ff97126778cad87f87eaeb5c8787e8f3a3de2e08a8773918c1874"
+    },
+    "terraform-style-guide": {
+      "source": "hashicorp/agent-skills",
+      "commit": "5e30fa5c867ba6777c37e4206babfd08049c396f",
+      "sourceType": "github",
+      "skillPath": "plugins/terraform/skills/terraform-style-guide/SKILL.md",
+      "computedHash": "39a686ad7d71d99e5fbead0a5cbd666c096af8d38d152f7597eb314e5b2b622c"
+    },
+    "terraform-test": {
+      "source": "hashicorp/agent-skills",
+      "commit": "5e30fa5c867ba6777c37e4206babfd08049c396f",
+      "sourceType": "github",
+      "skillPath": "plugins/terraform/skills/terraform-test/SKILL.md",
+      "computedHash": "8c66c1856320d5b74eb54b89f9c2553ff7e5733bfc08135edd922830287d0c0f"
     }
   }
 }
