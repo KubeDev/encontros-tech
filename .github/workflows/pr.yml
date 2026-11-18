@@ -1,0 +1,59 @@
+# Validação de PR (ADR 011): testes e build da imagem sem push.
+# Sem filtro de caminho — é o check obrigatório da main, e um check pulado por
+# filtro fica "Pending" e bloqueia o merge. Sem secrets: roda com segurança em PR de fork.
+name: PR
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Testes
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v10
+        with:
+          version: "0.13.8" # mesmo pin do Dockerfile
+          enable-cache: true
+
+      - name: Instalar dependências
+        run: uv sync --frozen
+
+      - name: Rodar testes
+        run: uv run pytest
+
+  build:
+    name: Build da imagem
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build (sem push)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: false
+          build-args: |
+            VERSION=pr-${{ github.event.pull_request.number }}
+            COMMIT_SHA=${{ github.event.pull_request.head.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
