@@ -1,9 +1,9 @@
 ---
 adr_number: "010"
-status: aceito
+status: obsoleto
 created: 2026-11-17
 supersedes: ""
-superseded_by: ""
+superseded_by: "012"
 ---
 
 # ADR 010: Imagem publicada no Docker Hub, repositório público, com tags sequenciais
