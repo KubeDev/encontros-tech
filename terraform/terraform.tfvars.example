@@ -1,0 +1,13 @@
+# Copie para terraform.tfvars e ajuste. O terraform.tfvars está no .gitignore.
+
+# Obrigatório. Alternativa sem arquivo: export TF_VAR_do_token=...
+do_token = "dop_v1_..."
+
+# Opcionais — os valores abaixo já são os padrões.
+# region             = "nyc1"
+# name_prefix        = "encontros-tech-hml"
+# kubernetes_version = "1.37.2-do.0"
+# node_size          = "s-1vcpu-2gb"
+# node_count         = 2
+# database_size      = "db-amd-1vcpu-1gb"
+# database_version   = "18"

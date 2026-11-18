@@ -1,0 +1,9 @@
+ignored:
+  - DL3008   # pin de versão por pacote apt — pinamos a base image
+  - DL3018   # idem para apk
+
+failure-threshold: warning
+
+trustedRegistries:
+  - docker.io
+  - ghcr.io

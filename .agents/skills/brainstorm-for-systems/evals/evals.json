@@ -1,0 +1,35 @@
+{
+  "skill_name": "brainstorm-for-systems",
+  "notes": "Skill conversacional e acionada só pelo usuário. Os evals simulam um turno com a decisão já tomada. Fixture: evals/files/tarefas (docs/trd.md, docs/glossary.md com Tarefa/_Evitar_: ticket, docs/adrs/001-armazenamento-em-memoria.md aceito).",
+  "evals": [
+    {
+      "id": 1,
+      "name": "adr-proposto-durante-a-conversa",
+      "prompt": "/brainstorm-for-systems Quero adicionar lembretes ao app de tarefas: quando uma tarefa vence, o usuário recebe uma notificação. Já pensei nisso: descartei fazer polling no banco a cada minuto porque não escala e decidi usar uma fila de agendamento com job atrasado. Ah, e vou chamar isso de 'Lembrete' — nada de 'alerta' ou 'aviso'. Pra formatar a data da notificação vou usar o Intl nativo mesmo.",
+      "expected_output": "A skill conduz o brainstorm com a lente de especificação sem perguntar a área, grava um ADR proposto para a fila de agendamento (com polling como alternativa descartada), não cria ADR para a escolha trivial de formatação de data, registra o termo Lembrete no glossário com _Evitar_ alerta e aviso, e não cria código, TRD ou PRD.",
+      "files": ["plugins/spec-driven-development/skills/brainstorm-for-systems/evals/files/tarefas"],
+      "assertions": [
+        {"text": "Existe exatamente um ADR novo em docs/adrs/ com status proposto, sobre a fila de agendamento", "type": "objective"},
+        {"text": "O ADR novo cita polling como alternativa descartada", "type": "objective"},
+        {"text": "Nenhum ADR foi criado para a formatação de data (Intl)", "type": "objective"},
+        {"text": "docs/glossary.md contém o termo Lembrete com _Evitar_ citando alerta e aviso", "type": "objective"},
+        {"text": "Nenhum arquivo de código, TRD ou PRD foi criado ou alterado", "type": "objective"},
+        {"text": "A resposta não pergunta se o assunto é especificação de projeto de desenvolvimento", "type": "qualitative"}
+      ]
+    },
+    {
+      "id": 2,
+      "name": "portao-aceita-e-apaga",
+      "prompt": "/brainstorm-for-systems Vamos consolidar o brainstorm dos lembretes. Confirmo a fila de agendamento (ADR-002 proposto) e desisti do cache de leitura (ADR-003 proposto) — não vamos fazer. Pode aplicar a consolidação.",
+      "expected_output": "A skill apresenta a consolidação com a tabela de destino dos ADRs, marca ADR-002 como aceito, apaga ADR-003 (e a linha dele na tabela do TRD, se houver), gera ou atualiza docs/trd.md via escrever-trd com a consolidação como fonte e sugere escrever-prd sem executá-lo.",
+      "files": ["plugins/spec-driven-development/skills/brainstorm-for-systems/evals/files/tarefas", "plugins/spec-driven-development/skills/brainstorm-for-systems/evals/files/portao"],
+      "assertions": [
+        {"text": "docs/adrs/002-*.md tem status aceito", "type": "objective"},
+        {"text": "docs/adrs/003-*.md não existe mais", "type": "objective"},
+        {"text": "docs/trd.md não referencia o ADR-003", "type": "objective"},
+        {"text": "docs/trd.md lista o ADR-002 em Decisões Globais", "type": "objective"},
+        {"text": "A resposta sugere escrever-prd como próximo passo, sem executá-lo", "type": "qualitative"}
+      ]
+    }
+  ]
+}
