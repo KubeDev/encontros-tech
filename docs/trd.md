@@ -10,6 +10,9 @@
 > custo baixo e provisionado com Terraform ([ADR 007](adrs/007-rede-vpc-dedicada-homologacao.md),
 > [ADR 008](adrs/008-terraform-estado-local-aplicacao-manual.md), [ADR 009](adrs/009-homologacao-otimizada-para-custo.md)).
 >
+> Os manifestos Kubernetes seguem o padrão definido em
+> [Padrão dos manifestos Kubernetes](#padrão-dos-manifestos-kubernetes).
+>
 > Marcações: **[Verificado — fonte, data]** fato externo consultado; **[premissa]** inferido na
 > consolidação, aceito pelo responsável, mas ainda passível de correção.
 
@@ -27,7 +30,7 @@
 | Ferramentas de build | Docker (imagem single-stage) |
 | Infraestrutura como código | Terraform ≥ 1.17 com provider `digitalocean` ~> 2.108, estado local, aplicado manualmente **[Verificado — registry.terraform.io e checkpoint-api.hashicorp.com: Terraform 1.17.2, provider 2.108.0, 2026-11-17]** ([ADR 008](adrs/008-terraform-estado-local-aplicacao-manual.md)) |
 | Gerenciador de pacotes | uv (`pyproject.toml` + `uv.lock`, `package = false`) |
-| Registry de imagens | Docker Hub |
+| Registry de imagens | Docker Hub, repositório público, tags sequenciais `v1`, `v2`, `v3`… ([ADR 010](adrs/010-imagem-docker-hub-publico-tags-sequenciais.md)) |
 | Orquestração | Kubernetes, manifestos em YAML puro aplicados com `kubectl` ([ADR 002](adrs/002-manifestos-kubernetes-yaml-puro.md)) |
 
 ---
@@ -72,7 +75,7 @@ encontros-tech/
 flowchart LR
     usuarios(["Quem testa a homologação"])
     operador["Máquina do operador<br/>Terraform + estado local<br/>kubectl / psql"]
-    dockerhub[("Docker Hub<br/>imagem da aplicação")]
+    dockerhub[("Docker Hub (público)<br/>imagem da aplicação, tags vN")]
 
     subgraph cloud["DigitalOcean — região var.region (padrão nyc1)"]
         subgraph vpc["VPC dedicada ao projeto"]
@@ -107,7 +110,7 @@ flowchart LR
 | Node pool | 2 nós `s-1vcpu-2gb`, sem autoscaling | Terraform |
 | Banco | PostgreSQL 18, `db-amd-1vcpu-1gb`, 1 nó sem standby, sem trusted sources (aceita qualquer origem — risco aceito) | Terraform |
 | Load Balancer | Um, criado pelo Service `LoadBalancer` dentro da VPC ([ADR 003](adrs/003-exposicao-service-loadbalancer.md)) | Kubernetes (Service) |
-| Aplicação | Deployment, Service, ConfigMap e Secret em YAML puro ([ADR 002](adrs/002-manifestos-kubernetes-yaml-puro.md)) | `kubectl` |
+| Aplicação | Namespace, Deployment, Service e ConfigMap em YAML puro ([ADR 002](adrs/002-manifestos-kubernetes-yaml-puro.md)); Secret criado à mão | `kubectl` |
 
 **Fronteira Terraform × kubectl:** a `DATABASE_URL` vem do output `private_uri` do banco e é
 colocada **manualmente** no Secret ([ADR 008](adrs/008-terraform-estado-local-aplicacao-manual.md)).
@@ -119,28 +122,50 @@ O estado do Terraform e os `*.tfvars` contêm segredos e nunca são commitados.
 
 | Componente | Definição |
 |---|---|
-| Deployment | 2 réplicas (uma por nó, quando o scheduler distribuir **[premissa]**); gunicorn com **2 workers sync** por pod, ouvindo em `0.0.0.0:8000`, `main:app`, com o diretório de trabalho em `src/` ([ADR 005](adrs/005-orcamento-de-conexoes-worker-sync-sem-pgbouncer.md)) |
-| Service | Tipo `LoadBalancer` (provisiona um Load Balancer da DigitalOcean), HTTP, sem TLS neste ciclo **[premissa]** ([ADR 003](adrs/003-exposicao-service-loadbalancer.md)) |
-| ConfigMap | Configuração não sensível: `APP_TITLE`, `DEBUG=false`, `LOG_LEVEL`, `LOG_FORMAT`, `SERVICE_NAME`, `SERVICE_VERSION` |
-| Secret | `DATABASE_URL` completa, com o **host privado** do banco (usuário, senha, host, porta e `sslmode=require`). Não é versionada com valores reais **[premissa]** |
-| Probes | `tcpSocket` na porta 8000 para liveness e readiness; sem probe HTTP, porque `/` consulta o banco ([ADR 004](adrs/004-porte-sem-alteracao-de-codigo.md)) |
+| Namespace | `encontros-tech`, dedicado; nada da aplicação vai para o `default` **[premissa]** |
+| Deployment | 2 réplicas (uma por nó, quando o scheduler distribuir **[premissa]**); gunicorn com **2 workers sync** por pod, ouvindo em `0.0.0.0:8000`, `main:app`, com o diretório de trabalho em `src/` ([ADR 005](adrs/005-orcamento-de-conexoes-worker-sync-sem-pgbouncer.md)). Imagem do Docker Hub com tag `vN`, nunca `latest` ([ADR 010](adrs/010-imagem-docker-hub-publico-tags-sequenciais.md)). Estratégia `RollingUpdate` padrão, sem `minReadySeconds`: com 2 réplicas, o padrão arredonda `maxUnavailable` para 0 e `maxSurge` para 1 |
+| Service | Tipo `LoadBalancer` (provisiona um Load Balancer da DigitalOcean), HTTP, sem TLS e sem domínio neste ciclo — acesso pelo IP do Load Balancer ([ADR 003](adrs/003-exposicao-service-loadbalancer.md)) |
+| ConfigMap | Configuração não sensível: `APP_TITLE`, `DEBUG=false`, `LOG_LEVEL`, `LOG_FORMAT`, `SERVICE_NAME`, `SERVICE_VERSION`. `SERVICE_VERSION` usa o mesmo `vN` da tag da imagem **[premissa]** |
+| Secret | `DATABASE_URL` completa, com o **host privado** do banco (usuário, senha, host, porta e `sslmode=require`). **Criado à mão** no namespace com as credenciais do banco; não existe em nenhum YAML do repositório. Confirma a premissa registrada no [ADR 002](adrs/002-manifestos-kubernetes-yaml-puro.md) |
+| Probes | **Nenhuma** (liveness, readiness e startup), por simplicidade. Substitui a probe `tcpSocket` citada nas consequências do [ADR 004](adrs/004-porte-sem-alteracao-de-codigo.md). Custo aceito: ver [Padrão dos manifestos Kubernetes](#padrão-dos-manifestos-kubernetes) |
 | Banco | PostgreSQL gerenciado da DigitalOcean, fora do cluster e dentro da mesma VPC ([ADR 001](adrs/001-banco-postgresql-gerenciado-digitalocean.md), [ADR 007](adrs/007-rede-vpc-dedicada-homologacao.md)) |
 
 **Local (Docker Compose):** serviço da aplicação (mesma imagem) + serviço PostgreSQL 18 com
 volume, configurados a partir de `.env` (modelo em `.env.exemple`).
 
+### Padrão dos manifestos Kubernetes
+
+Regras que todo manifesto da aplicação segue. Escopo: **homologação**; não há validação
+automática dos YAMLs neste ciclo (kubeconform, kube-linter) — a conferência é na revisão.
+
+| Regra | Definição |
+|---|---|
+| Formato | YAML puro aplicado com `kubectl apply` ([ADR 002](adrs/002-manifestos-kubernetes-yaml-puro.md)); um recurso por arquivo (Namespace, Deployment, Service, ConfigMap) **[premissa]** |
+| Namespace | Todo recurso declara `namespace: encontros-tech` **[premissa]** |
+| Labels | Labels recomendadas `app.kubernetes.io/*` (`name`, `instance`, `version`, `component`, `part-of`, `managed-by`) em todos os recursos; o `selector` do Deployment e do Service usa só labels estáveis (sem `version`) **[premissa]** |
+| Imagem | `<usuário>/<repositório>:vN` do Docker Hub público, sem `imagePullSecret`; tag publicada nunca é sobrescrita; nunca `latest` ([ADR 010](adrs/010-imagem-docker-hub-publico-tags-sequenciais.md)) |
+| Versão | Deploy = trocar a tag `vN` no Deployment **e** o `SERVICE_VERSION` no ConfigMap, e aplicar os dois **[premissa]** |
+| Probes | Nenhuma, por **simplicidade** — decisão do responsável. Não adicionar probes sem rever esta regra. Custo aceito: (1) sem readiness, o pod novo entra no Load Balancer assim que o contêiner sobe, antes de o gunicorn abrir a porta 8000 — por alguns segundos a cada rollout, parte das requisições recebe recusa de conexão ou 502; (2) sem liveness, um processo travado sem cair continua recebendo tráfego. Processo que **morre** (ex.: `create_all` falhando) é reiniciado pela `restartPolicy`, sem precisar de probe. O `HEALTHCHECK` do Dockerfile é ignorado pelo Kubernetes e vale só no Compose |
+| Recursos | Todo contêiner declara `requests` e `limits` de CPU e memória; valores definidos no manifesto, compatíveis com nós `s-1vcpu-2gb` e 1 pod por nó **[premissa]** |
+| securityContext | `runAsNonRoot: true` com `runAsUser: 1001` (o Dockerfile declara `USER app` pelo nome; sem UID numérico o kubelet não consegue confirmar que não é root e recusa o contêiner); `allowPrivilegeEscalation: false`; `capabilities.drop: [ALL]`; `readOnlyRootFilesystem: true` com `/tmp` montado como `emptyDir`, porque o código grava métricas lá **[premissa]** |
+| Secret | Criado à mão antes do primeiro deploy, no namespace `encontros-tech`, com a chave `DATABASE_URL` tirada do output `private_uri` do Terraform; o Deployment só referencia o Secret pelo nome |
+| Schema | Sem Job nem initContainer de schema: vale o `create_all` no import ([ADR 006](adrs/006-estrategia-de-schema-e-migrations.md), em aberto) |
+
 ### Imagem Docker
 
 - Base Python 3.12 slim, **single-stage**: o `uv` e o `uv.lock` entram só como mount de build
   (`uv sync --frozen --no-dev`), sem ficar em nenhuma camada; a imagem leva o ambiente e `src/`.
-- Executa como usuário não-root; `/tmp` gravável (o código cria o diretório de métricas lá).
+- Publicada no Docker Hub, repositório público, com tag `vN` ([ADR 010](adrs/010-imagem-docker-hub-publico-tags-sequenciais.md)).
+  Como é pública, nada sensível entra nela: credenciais só pelo Secret, nenhum `.env` copiado.
+- Executa como usuário não-root `app` (UID 1001); `/tmp` gravável (o código cria o diretório de métricas lá).
 - Contexto de build na raiz do repositório (o `uv.lock` fica na raiz; o Dockerfile antigo, removido
   em `0f5bbad`, usava `src/` e `requirements.txt`).
 
 ### Inicialização do schema
 
-`create_all` roda no import de `main.py`, em todo processo. A estratégia definitiva está
-**em aberto** ([ADR 006](adrs/006-estrategia-de-schema-e-migrations.md)).
+`create_all` roda no import de `main.py`, em todo processo. Com 2 réplicas × 2 workers subindo
+juntos, um pod pode reiniciar uma vez no primeiro deploy (risco aceito). A estratégia definitiva
+está **em aberto** ([ADR 006](adrs/006-estrategia-de-schema-e-migrations.md)).
 
 ---
 
@@ -150,9 +175,9 @@ volume, configurados a partir de `.env` (modelo em `.env.exemple`).
 |---|---|
 | Performance | Não definido |
 | Custo | Restrição declarada: homologação otimizada para custo baixo — control plane sem HA, 2 nós do menor tamanho, banco de 1 nó sem standby ([ADR 009](adrs/009-homologacao-otimizada-para-custo.md)) |
-| Disponibilidade / SLA | Sem SLA (homologação). 2 réplicas em 2 nós, para manter a aplicação no ar durante o rolling update e se um nó cair. Sem HA no control plane nem standby no banco: falha do banco derruba o ambiente. Backup diário do banco fica com a DigitalOcean; dados de homologação são descartáveis **[premissa]**. Backup do estado do Terraform é responsabilidade do operador, fora do escopo |
+| Disponibilidade / SLA | Sem SLA (homologação). 2 réplicas em 2 nós, para manter a aplicação no ar durante o rolling update e se um nó cair. Sem HA no control plane nem standby no banco: falha do banco derruba o ambiente. Sem probes: a cada rollout há uma janela curta em que parte das requisições falha (ver [Padrão dos manifestos Kubernetes](#padrão-dos-manifestos-kubernetes)), e processo travado não é reiniciado. Backup diário do banco fica com a DigitalOcean; dados de homologação são descartáveis **[premissa]**. Backup do estado do Terraform é responsabilidade do operador, fora do escopo |
 | Escalabilidade | Escalar por réplicas, não por workers. Limite dado pela regra de conexões: `(réplicas + surge) × workers × conexões por worker ≤ conexões do plano − folga`. Hoje: (2 + 1) × 2 × 1 = 6 de 22 no plano de 1 GiB. Passou do limite → PgBouncer ou plano maior, via ADR novo ([ADR 005](adrs/005-orcamento-de-conexoes-worker-sync-sem-pgbouncer.md)). Sem autoscaling neste ciclo |
-| Segurança | Conexão com o banco por TLS (`sslmode=require`) **[Verificado — DigitalOcean, How to Connect, 2026-11-16]**; aplicação → banco pelo endereço privado da VPC; credenciais só em Secret; estado do Terraform e `*.tfvars` fora do Git; imagem não-root. Riscos aceitos: banco sem trusted sources (aceita conexão de qualquer origem) e API do cluster sem firewall ([ADR 007](adrs/007-rede-vpc-dedicada-homologacao.md)) — desenho não serve para produção; `SECRET_KEY` fixa no código; tráfego público em HTTP sem TLS; o `edit_token` aparece em log de nível INFO no service de eventos |
+| Segurança | Conexão com o banco por TLS (`sslmode=require`) **[Verificado — DigitalOcean, How to Connect, 2026-11-16]**; aplicação → banco pelo endereço privado da VPC; credenciais só em Secret criado à mão, fora do repositório; contêiner com `runAsNonRoot`, sem escalada de privilégio, sem capabilities e com sistema de arquivos somente leitura; estado do Terraform e `*.tfvars` fora do Git; imagem não-root. Riscos aceitos: banco sem trusted sources (aceita conexão de qualquer origem) e API do cluster sem firewall ([ADR 007](adrs/007-rede-vpc-dedicada-homologacao.md)) — desenho não serve para produção; `SECRET_KEY` fixa no código; imagem pública no Docker Hub (o código de `src/` fica visível) ([ADR 010](adrs/010-imagem-docker-hub-publico-tags-sequenciais.md)); tráfego público em HTTP sem TLS; o `edit_token` aparece em log de nível INFO no service de eventos |
 | Observabilidade | Logs em texto no stdout (sem cor fora de TTY). Métricas Prometheus em `/metrics` na porta da aplicação, refletindo só o worker que atendeu (risco aceito; `PROMETHEUS_MULTIPROC_DIR` não deve ser definida no contêiner). A coleta pelo Prometheus fica fora do escopo deste ciclo |
 
 ---
@@ -165,7 +190,7 @@ volume, configurados a partir de `.env` (modelo em `.env.exemple`).
 | Kubernetes — DOKS | Plataforma de execução | Service `LoadBalancer` cria um Load Balancer pago por Service **[premissa: cluster DOKS]**. Cluster e Load Balancer não migram de VPC; sub-redes VPC-native fixadas na criação, sem sobreposição com VPCs do time e sem ampliação; control plane HA ligado por padrão a partir da 1.36 e irreversível; menor nó `s-1vcpu-2gb` **[Verificado — docs.digitalocean.com (VPC, DOKS) e docs do provider Terraform via Context7; `doctl`, 2026-11-17]** | externo — DigitalOcean |
 | VPC — DigitalOcean | Rede privada | Regional: só recursos da mesma região; banco gerenciado pode migrar de VPC, cluster e Load Balancer não **[Verificado — docs.digitalocean.com, VPC, via Context7, 2026-11-17]** | externo — DigitalOcean |
 | Terraform + provider `digitalocean` | Provisionamento | Estado local com segredos em texto puro; sem lock de concorrência (operador único) ([ADR 008](adrs/008-terraform-estado-local-aplicacao-manual.md)) | externo — HashiCorp / DigitalOcean |
-| Docker Hub | Registry de imagens | Origem da imagem da aplicação para o cluster | externo — Docker |
+| Docker Hub | Registry de imagens | Repositório público, pull anônimo pelo cluster. Limite de pull anônimo: 100 a cada 6 horas por IPv4 (ou sub-rede IPv6 /64); conta pessoal autenticada: 200 **[Verificado — [Docker Hub pull usage and limits](https://docs.docker.com/docker-hub/usage/pulls/), 2026-11-17]**. Com 2 nós e poucos deploys, longe do limite ([ADR 010](adrs/010-imagem-docker-hub-publico-tags-sequenciais.md)) | externo — Docker |
 
 ---
 
@@ -223,3 +248,4 @@ Não há autenticação de usuário. A edição de um evento é autorizada pela 
 | 007 | Rede da homologação — VPC dedicada, banco por endereço privado e acesso público aceito | 2026-11-17 | aceito | [007](adrs/007-rede-vpc-dedicada-homologacao.md) |
 | 008 | Infraestrutura em Terraform, com estado local e aplicação manual | 2026-11-17 | aceito | [008](adrs/008-terraform-estado-local-aplicacao-manual.md) |
 | 009 | Ambiente de homologação dimensionado para custo baixo | 2026-11-17 | aceito | [009](adrs/009-homologacao-otimizada-para-custo.md) |
+| 010 | Imagem publicada no Docker Hub, repositório público, com tags sequenciais | 2026-11-17 | aceito | [010](adrs/010-imagem-docker-hub-publico-tags-sequenciais.md) |
