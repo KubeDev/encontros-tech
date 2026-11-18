@@ -24,7 +24,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.3.3 # o projeto não publica tag maior (v10)
         with:
           version: "0.13.8" # mesmo pin do Dockerfile
           enable-cache: true
